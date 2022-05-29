@@ -1,91 +1,130 @@
 ﻿using System.CommandLine;
 using System.Diagnostics;
-using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Text;
-using dotnetmtr.Tracert;
 
+namespace dotnetmtr {
+    class Program {
 
-// Create some options:
-var addressOption = new Option<string>(
-        "--address",
-        getDefaultValue: () => "willwh.com",
-        description: "An option whose argument is parsed as an int");
-var maxhopsOption = new Option<int>(
-        "--max-hops",
-        getDefaultValue: () => 30,
-        description: "Maximum number of hops");
-var timeoutOption = new Option<int>(
-        "--timeout",
-        getDefaultValue: () => 5000,
-        description: "Timeout value in milliseconds");
+        private static readonly byte[] _buffer = Encoding.ASCII.GetBytes("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        private const string strRequest_Time_Out = "Request timed out.";
+        private const string strRequest_Time_NA = "*";
+        static async Task Main(string[] args)
+        {
+            // Create some options:
+            var addressOption = new Option<string>(
+                    "--address",
+                    getDefaultValue: () => "willwh.com",
+                    description: "An option whose argument is parsed as an int");
+            var maxhopsOption = new Option<int>(
+                    "--max-hops",
+                    getDefaultValue: () => 30,
+                    description: "Maximum number of hops");
+            var timeoutOption = new Option<int>(
+                    "--timeout",
+                    getDefaultValue: () => 5000,
+                    description: "Timeout value in milliseconds");
 
-// Add the options to a root command:
-var rootCommand = new RootCommand();
-rootCommand.Description = "dotnetmtr";
+            // Add the options to a root command:
+            var rootCommand = new RootCommand();
+            rootCommand.Description = "dotnetmtr";
 
-rootCommand.Add(addressOption);
-rootCommand.Add(maxhopsOption);
-rootCommand.Add(timeoutOption);
+            rootCommand.AddOption(addressOption);
+            rootCommand.AddOption(maxhopsOption);
+            rootCommand.AddOption(timeoutOption);
 
+            rootCommand.SetHandler(async (string address, int maxhops, int timeout) =>
+            {
+               await traceRouteAsync(address, maxhops, timeout);
+            }, addressOption, maxhopsOption, timeoutOption);
 
-
-rootCommand.SetHandler((string address, int maxhops, int timeout) =>
-{
-    Tracert(address, maxhops, timeout);
-}, addressOption, maxhopsOption, timeoutOption);
-
-// Parse the incoming args and invoke the handler
-return rootCommand.Invoke(args);
-
-static IEnumerable<TracertEntry> Tracert(string Address, int MaxHops, int Timeout) {
-    Ping pingSender = new Ping ();
-    PingOptions options = new PingOptions ();
-
-    Console.WriteLine($"The value for --address is: {Address}");
-    Console.WriteLine($"The value for --max-hops is: {MaxHops}");
-    Console.WriteLine($"The value for --timeout is: {Timeout}");
-    // Use the default Ttl value which is 128,
-    // but change the fragmentation behavior.
-    options.DontFragment = true;
-
-    // Create a buffer of 32 bytes of data to be transmitted.
-    string data = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    byte[] buffer = Encoding.ASCII.GetBytes (data);
-    // Need to figure out incorporating maxHops.... and hops in general :)
-    // StopWatch to check timing on pings
-    Stopwatch pingReplyTime = new Stopwatch();
-    pingReplyTime.Start();
-    PingReply reply = pingSender.Send (Address, Timeout, buffer, options);
-    pingReplyTime.Stop();
-
-    do {
-
-        string hostname = string.Empty;
-        if (reply.Address != null) {
-            try {
-                hostname = Dns.GetHostEntry(reply.Address).HostName;
+            // Parse the incoming args and invoke the handler
+            await rootCommand.InvokeAsync(args);
+        }
+        public static async Task traceRouteAsync(string address, int maxHops, int timeout)
+        {
+            // Start parallel tasks for each hop
+            var traceRouteTasks = new Task<TraceRouteResult>[maxHops];
+            for (int baseHop = 0; baseHop < maxHops; baseHop++)
+            {
+                traceRouteTasks[baseHop] = traceRouteInteralAsync(address, baseHop, timeout);
             }
-            catch (Exception ex) {
-                Console.WriteLine(ex.ToString());
+
+            await Task.WhenAll(traceRouteTasks);
+
+            for (int hop = 0; hop < maxHops; hop++)
+            {
+                var traceTask = traceRouteTasks[hop];
+                if (traceTask.Status == TaskStatus.RanToCompletion)
+                {
+                    var res = traceTask.Result;
+                    await writeToConsole(res.Message);
+
+                    if (res.IsComplete)
+                    {
+                        //trace complete
+                        break;
+                    }
+                }
+                else
+                {
+                    await writeToConsole($"Could not get result for hop #{hop + 1}");
+                }
             }
         }
 
-        yield return new TracertEntry()
+        public static async Task<TraceRouteResult> traceRouteInteralAsync(string address, int baseHop, int timeout)
         {
-            HopID = options.Ttl,
-            Address = reply.Address == null ? "N/A" : reply.Address.ToString(),
-            Hostname = hostname,
-            ReplyTime = pingReplyTime.ElapsedMilliseconds,
-            ReplyStatus = reply.Status
-        };
+            using (Ping pingSender = new Ping())
+            {
+                var hop = baseHop + 1;
 
-        options.Ttl++;
-        pingReplyTime.Reset();
-        Console.WriteLine ("Address: {0}", reply.Address.ToString ());
-        Console.WriteLine ("RoundTrip time: {0}", reply.RoundtripTime);
-        Console.WriteLine ("Buffer size: {0}", reply.Buffer.Length);
+                PingOptions pingOptions = new PingOptions();
+                Stopwatch stopWatch = new Stopwatch();
+                pingOptions.DontFragment = true;
+                pingOptions.Ttl = hop;
+
+                stopWatch.Start();
+
+                PingReply pingReply = await pingSender.SendPingAsync(
+                    address,
+                    timeout,
+                    _buffer,
+                    pingOptions
+                );
+
+                stopWatch.Stop();
+
+                var elapsedMilliseconds = stopWatch.ElapsedMilliseconds;
+
+                string pingReplyAddress;
+                string strElapsedMilliseconds;
+
+                if (pingReply.Status == IPStatus.TimedOut)
+                {
+                    pingReplyAddress = strRequest_Time_Out;
+                    strElapsedMilliseconds = strRequest_Time_NA;
+                }
+                else
+                {
+                    pingReplyAddress = pingReply.Address.ToString();
+                    strElapsedMilliseconds = $"{elapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)} ms";
+                }
+
+                var traceResults = new StringBuilder();
+                traceResults.Append(hop.ToString(System.Globalization.CultureInfo.InvariantCulture).PadRight(4, ' '));
+                traceResults.Append(strElapsedMilliseconds.PadRight(10, ' '));
+                traceResults.Append(pingReplyAddress);
+
+                return new TraceRouteResult(traceResults.ToString(), pingReply.Status == IPStatus.Success);
+            }
+        }
+
+        public static async Task<int> writeToConsole(string message)
+        {
+                Console.WriteLine(message);
+                return 0;
+        }
     }
-    while (reply.Status != IPStatus.Success && options.Ttl <= MaxHops);
 }
