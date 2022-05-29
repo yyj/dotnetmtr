@@ -1,15 +1,18 @@
 ﻿using System.CommandLine;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Text;
 
 namespace dotnetmtr {
+
     class Program {
 
         private static readonly byte[] _buffer = Encoding.ASCII.GetBytes("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        private const string strRequest_Time_Out = "Request timed out.";
-        private const string strRequest_Time_NA = "*";
+        private const string _requestTimeOut = "Request timed out.";
+        private const string _requestTimeNa = "*";
+
         static async Task Main(string[] args)
         {
             // Create some options:
@@ -42,6 +45,7 @@ namespace dotnetmtr {
             // Parse the incoming args and invoke the handler
             await rootCommand.InvokeAsync(args);
         }
+
         public static async Task traceRouteAsync(string address, int maxHops, int timeout)
         {
             // Start parallel tasks for each hop
@@ -59,7 +63,7 @@ namespace dotnetmtr {
                 if (traceTask.Status == TaskStatus.RanToCompletion)
                 {
                     var res = traceTask.Result;
-                    await writeToConsole(res.Message);
+                    writeToConsole(res.Message);
 
                     if (res.IsComplete)
                     {
@@ -69,7 +73,7 @@ namespace dotnetmtr {
                 }
                 else
                 {
-                    await writeToConsole($"Could not get result for hop #{hop + 1}");
+                    writeToConsole($"Could not get result for hop #{hop + 1}");
                 }
             }
         }
@@ -103,17 +107,17 @@ namespace dotnetmtr {
 
                 if (pingReply.Status == IPStatus.TimedOut)
                 {
-                    pingReplyAddress = strRequest_Time_Out;
-                    strElapsedMilliseconds = strRequest_Time_NA;
+                    pingReplyAddress = _requestTimeOut;
+                    strElapsedMilliseconds = _requestTimeNa;
                 }
                 else
                 {
                     pingReplyAddress = pingReply.Address.ToString();
-                    strElapsedMilliseconds = $"{elapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)} ms";
+                    strElapsedMilliseconds = $"{elapsedMilliseconds.ToString(CultureInfo.InvariantCulture)} ms";
                 }
 
                 var traceResults = new StringBuilder();
-                traceResults.Append(hop.ToString(System.Globalization.CultureInfo.InvariantCulture).PadRight(4, ' '));
+                traceResults.Append(hop.ToString(CultureInfo.InvariantCulture).PadRight(4, ' '));
                 traceResults.Append(strElapsedMilliseconds.PadRight(10, ' '));
                 traceResults.Append(pingReplyAddress);
 
@@ -121,10 +125,10 @@ namespace dotnetmtr {
             }
         }
 
-        public static async Task<int> writeToConsole(string message)
+        public static int writeToConsole(string message)
         {
-                Console.WriteLine(message);
-                return 0;
+            Console.WriteLine(message);
+            return 0;
         }
     }
 }
